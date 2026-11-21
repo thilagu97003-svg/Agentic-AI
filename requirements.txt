@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+sqlalchemy
+psycopg2-binary
+redis
+langchain
+langchain-community
+langchain-ollama
+langchain-chroma
+langgraph
+chromadb
+rank-bm25
+mcp
+python-dotenv
+markdown

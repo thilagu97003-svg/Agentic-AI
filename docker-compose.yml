@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: helpdesk_postgres
+    environment:
+      POSTGRES_USER: helpdesk
+      POSTGRES_PASSWORD: helpdesk123
+      POSTGRES_DB: helpdesk_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 300m
+
+  redis:
+    image: redis:7-alpine
+    container_name: helpdesk_redis
+    ports:
+      - "6379:6379"
+    mem_limit: 100m
+
+  api:
+    build: .
+    container_name: helpdesk_api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://helpdesk:helpdesk123@postgres:5432/helpdesk_db
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LLM_MODEL: llama3.2:3b
+      EMBED_MODEL: nomic-embed-text
+      CHROMA_DIR: /app/chroma_db
+    volumes:
+      - chroma_data:/app/chroma_db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - postgres
+      - redis
+    mem_limit: 1500m
+
+volumes:
+  pgdata:
+  chroma_data:
