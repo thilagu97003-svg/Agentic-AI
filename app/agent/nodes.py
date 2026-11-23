@@ -2,16 +2,14 @@ import json
 import re
 from difflib import SequenceMatcher
 from langchain_core.documents import Document
-from langchain_ollama import ChatOllama
 from app.config import settings
+from app.llm import get_chat_model
 from app.rag.retriever import HybridRetriever, grade_documents, rewrite_query
 from app.mcp_server import tools
 from app.services.redis_state import cache_get, cache_set
 
-llm = ChatOllama(model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
-json_llm = ChatOllama(
-    model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0, format="json"
-)
+llm = get_chat_model()
+json_llm = get_chat_model(json_mode=True)
 
 _retriever = None
 
@@ -39,7 +37,7 @@ def keyword_classify(text: str):
     t = text.lower()
     category = "other"
     for cat in ["security", "access", "network", "hardware", "software"]:
-        if any(k in t for k in KEYWORDS[cat]):
+        if any(re.search(r"\b" + re.escape(k), t) for k in KEYWORDS[cat]):
             category = cat
             break
     if category == "security":
@@ -82,6 +80,10 @@ def is_ack(message: str) -> bool:
 def classify_node(state):
     msg = state["message"]
     category, priority = keyword_classify(msg)
+    # long pasted logs or attachment text: keywords are unreliable, let the LLM decide
+    # (security keywords are always kept)
+    if len(msg.split()) > 80 and category != "security":
+        category, priority = "other", "medium"
 
     if category == "other":  # keywords gave no answer, ask the LLM
         try:
@@ -135,7 +137,8 @@ def retrieve_node(state):
 def grade_node(state):
     docs = [Document(page_content=t) for t in state["docs"]]
     ok = grade_documents(state["query"], docs)
-    category_match = state.get("category") in state.get("categories", [])[:2]
+    short = len(state["issue"].split()) <= 40  # category shortcut only for short, normal requests
+    category_match = short and state.get("category") in state.get("categories", [])[:2]
     return {"relevant": ok or category_match}
 
 
@@ -192,6 +195,33 @@ def generate_node(state):
         return {
         "last_answer": answer,
         "answer": answer + "\n\nDid this resolve your issue? (yes / no)",
+        "status": "awaiting_feedback",
+    }
+
+
+def analyze_node(state):
+    """No KB article matched, but the user sent a screenshot or log: explain it and suggest safe steps."""
+    prompt = (
+        "You are an IT helpdesk assistant. The user sent a screenshot description or a log or error text. "
+        "No knowledge base article matches it.\n"
+        f"User message and attachment details:\n{state['issue'][:3000]}\n\n"
+        "If this does not describe an IT problem, reply with exactly: "
+        "I could not find an IT problem in this attachment. Please describe the issue in text.\n"
+        "Otherwise: first explain in one or two simple sentences what the problem or error means, "
+        "then give 3 to 5 short, safe troubleshooting steps as a numbered list. "
+        "Never suggest risky actions such as registry edits, deleting system files or disabling security software. "
+        "Do not ask a question at the end."
+    )
+    answer = llm.invoke(prompt).content.strip()
+    if answer.startswith("I could not find an IT problem"):
+        return {"answer": answer, "status": "new"}
+    return {
+        "last_answer": answer,
+        "answer": (
+            "I could not find a matching knowledge base article, so I analyzed your attachment:\n\n"
+            + answer
+            + "\n\nDid this resolve your issue? (yes / no)"
+        ),
         "status": "awaiting_feedback",
     }
 

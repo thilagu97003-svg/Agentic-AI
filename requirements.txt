@@ -14,3 +14,5 @@ rank-bm25
 mcp
 python-dotenv
 markdown
+langchain-openai
+python-multipart

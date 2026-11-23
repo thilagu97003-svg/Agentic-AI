@@ -31,6 +31,13 @@ services:
       LLM_MODEL: llama3.2:3b
       EMBED_MODEL: nomic-embed-text
       CHROMA_DIR: /app/chroma_db
+      LLM_PROVIDERS: ${LLM_PROVIDERS:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
     volumes:
       - chroma_data:/app/chroma_db
     extra_hosts:

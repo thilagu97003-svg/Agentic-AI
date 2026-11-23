@@ -17,6 +17,7 @@ class AgentState(TypedDict, total=False):
     categories: List[str]
     relevant: bool
     retries: int
+    has_attachment: bool
     feedback: str
     answer: str
     last_answer: str

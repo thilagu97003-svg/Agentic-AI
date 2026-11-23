@@ -1,8 +1,8 @@
 import re
 from rank_bm25 import BM25Okapi
 from langchain_core.documents import Document
-from langchain_ollama import ChatOllama
 from app.config import settings
+from app.llm import get_chat_model
 from app.rag.ingest import get_vectorstore
 
 
@@ -39,9 +39,7 @@ class HybridRetriever:
         return [d for d, _ in ranked[:k]]
 
 
-llm = ChatOllama(
-    model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0
-)
+llm = get_chat_model()
 
 
 def grade_documents(query: str, docs) -> bool:

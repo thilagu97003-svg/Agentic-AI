@@ -1,7 +1,7 @@
 import json
 import markdown
 from fastapi.responses import HTMLResponse
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -14,6 +14,8 @@ from app.agent.graph import run_turn
 from app.agent.nodes import is_feedback
 from app.services.redis_state import load_session
 from app.services.report import build_report
+from app.config import settings
+from app.llm import provider_chain, STATE, describe_image
 
 Base.metadata.create_all(bind=engine)
 
@@ -29,6 +31,8 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    attachment_text: str = ""   # text read from an uploaded file or screenshot
+    attachment_name: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -44,7 +48,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     session = load_session(req.session_id)
     feedback_turn = is_feedback(session.get("status"), req.message)
 
-    result = run_turn(req.session_id, req.message)
+    result = run_turn(req.session_id, req.message, req.attachment_text)
     if result.get("ack_only"):  # reply after the incident is closed, no new incident
         last = (
             db.query(Incident)
@@ -81,7 +85,8 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(inc)
 
-    db.add(Message(incident_id=inc.id, role="user", content=req.message))
+    user_text = req.message + (f"\n(Attached: {req.attachment_name})" if req.attachment_name else "")
+    db.add(Message(incident_id=inc.id, role="user", content=user_text))
     db.add(Message(incident_id=inc.id, role="assistant", content=result["answer"]))
     for a in result.get("action_log", []):
         db.add(ActionLog(
@@ -113,6 +118,35 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         priority=inc.priority,
         status=inc.status,
     )
+
+
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+TEXT_TYPES = {".txt", ".log", ".csv", ".json", ".md"}
+
+
+@app.post("/api/upload")
+def upload(file: UploadFile = File(...)):
+    """Read a screenshot (vision model) or a text/log file and return text for the agent."""
+    name = file.filename or "file"
+    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    if ext not in IMAGE_TYPES and ext not in TEXT_TYPES:
+        raise HTTPException(400, "Allowed files: png, jpg, webp, txt, log, csv, json, md")
+
+    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, f"File too large (max {settings.MAX_UPLOAD_MB} MB)")
+
+    if ext in IMAGE_TYPES:
+        text = describe_image(data, IMAGE_TYPES[ext])
+        if not text:
+            raise HTTPException(
+                422, "Could not read this image (no vision model available). Please describe the problem in text."
+            )
+        return {"name": name, "kind": "image", "text": text[:2000]}
+
+    text = data.decode("utf-8", errors="ignore").strip()
+    return {"name": name, "kind": "text", "text": text[:3000]}
 
 
 @app.get("/api/incidents")
@@ -154,3 +188,10 @@ def view_report(incident_id: int, db: Session = Depends(get_db)):
       h2 {{ color: #2563eb; margin-top: 24px; }}
       code {{ background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }}
     </style></head><body>{body}</body></html>"""
+@app.get("/api/info")
+def info():
+    return {
+        "provider_order": provider_chain(),
+        "last_used": STATE["last_provider"],
+        "embeddings": settings.EMBED_MODEL,
+    }
