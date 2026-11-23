@@ -46,7 +46,6 @@ An agentic AI support platform that classifies IT issues, searches a knowledge b
 
 ## Architecture
 
-![Architecture](docs/architecture.png)[cite: 26]
 
 ```mermaid
 flowchart TD
